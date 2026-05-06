@@ -539,6 +539,8 @@ const HTML = `<!DOCTYPE html>
       selectedGistDetail = await api('/gists/' + id);
       selectedGist = selectedGistDetail;
       isEditing = false;
+      editBtn.classList.remove('hidden'); deleteBtn.classList.remove('hidden'); saveBtn.classList.add('hidden'); cancelEditBtn.classList.add('hidden');
+      visibilityBtn.classList.add('hidden');
       renderContent();
       loadComments();
       loadingOverlay.classList.add('hidden');
