@@ -143,6 +143,21 @@ const HTML = `<!DOCTYPE html>
   </div>
 </div>
 
+<!-- Delete Confirmation Modal -->
+<div id="delete-modal" class="fixed inset-0 z-50 flex items-center justify-center bg-black/70 hidden" data-action="close">
+  <div class="bg-gray-900 rounded-xl shadow-2xl w-full max-w-sm p-6 mx-4 border border-gray-800">
+    <p class="text-sm text-gray-300 text-center mb-4">确认删除此gist？</p>
+    <p id="delete-error" class="text-sm text-red-400 text-center mb-3 hidden"></p>
+    <div class="flex items-center gap-3">
+      <button id="delete-cancel-btn" class="flex-1 py-2 bg-gray-800 hover:bg-gray-700 rounded-lg text-sm transition-colors">取消</button>
+      <button id="delete-confirm-btn" class="flex-1 py-2 bg-red-600 hover:bg-red-700 rounded-lg text-sm font-medium transition-colors disabled:opacity-60 disabled:cursor-not-allowed flex items-center justify-center gap-2">
+        <svg id="delete-spinner" class="hidden animate-spin w-4 h-4" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
+        <span id="delete-confirm-text">确认</span>
+      </button>
+    </div>
+  </div>
+</div>
+
 <!-- Main App -->
 <div id="app" class="h-full flex flex-col hidden">
   <header class="flex items-center justify-between px-4 py-2.5 bg-gray-900 border-b border-gray-800 shrink-0">
@@ -208,6 +223,10 @@ const HTML = `<!DOCTYPE html>
             <button id="edit-btn" class="px-3 py-1.5 text-xs bg-gray-800 hover:bg-gray-700 rounded-md transition-colors flex items-center gap-1">
               <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
               编辑
+            </button>
+            <button id="delete-btn" class="px-3 py-1.5 text-xs bg-gray-800 hover:bg-red-700 rounded-md transition-colors flex items-center gap-1">
+              <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"/></svg>
+              删除
             </button>
             <button id="save-btn" class="px-3 py-1.5 text-xs bg-blue-600 hover:bg-blue-700 rounded-md transition-colors flex items-center gap-1 hidden">
               <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M19 21H5a2 2 0 01-2-2V5a2 2 0 012-2h11l5 5v11a2 2 0 01-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
@@ -281,9 +300,16 @@ const HTML = `<!DOCTYPE html>
   const gistMeta = $('#gist-meta');
   const gistLink = $('#gist-link');
   const editBtn = $('#edit-btn');
+  const deleteBtn = $('#delete-btn');
   const saveBtn = $('#save-btn');
   const cancelEditBtn = $('#cancel-edit-btn');
   const visibilityBtn = $('#visibility-btn');
+  const deleteModal = $('#delete-modal');
+  const deleteCancelBtn = $('#delete-cancel-btn');
+  const deleteConfirmBtn = $('#delete-confirm-btn');
+  const deleteConfirmText = $('#delete-confirm-text');
+  const deleteSpinner = $('#delete-spinner');
+  const deleteError = $('#delete-error');
   const visibilityLock = $('#visibility-icon-lock');
   const visibilityGlobe = $('#visibility-icon-globe');
   const savingOverlay = $('#saving-overlay');
@@ -482,7 +508,7 @@ const HTML = `<!DOCTYPE html>
     allGists.unshift(draft);
     if (searchInput.value.trim()) { gists.unshift(draft); }
     renderGistList();
-    editBtn.classList.add('hidden');
+    editBtn.classList.add('hidden'); deleteBtn.classList.add('hidden');
     saveBtn.classList.remove('hidden');
     cancelEditBtn.classList.remove('hidden');
     visibilityBtn.classList.remove('hidden');
@@ -501,7 +527,7 @@ const HTML = `<!DOCTYPE html>
       selectedGistDetail = draft; selectedGist = draft;
       isEditing = true; editContent = {}; editFileNames = Object.keys(draft.files); editPublic = false;
       for (var name in draft.files) { editContent[name] = draft.files[name].content; }
-      editBtn.classList.add('hidden'); saveBtn.classList.remove('hidden'); cancelEditBtn.classList.remove('hidden');
+      editBtn.classList.add('hidden'); deleteBtn.classList.add('hidden'); saveBtn.classList.remove('hidden'); cancelEditBtn.classList.remove('hidden');
       visibilityBtn.classList.remove('hidden'); updateVisibilityIcon(); renderContent();
       commentsList.innerHTML = '<div class="p-4 text-xs text-gray-500 text-center">保存后才可以评论</div>';
       commentCount.textContent = '0';
@@ -602,8 +628,52 @@ const HTML = `<!DOCTYPE html>
     editFileNames = Object.keys(g.files);
     editPublic = g.public;
     for (var name in g.files) { editContent[name] = g.files[name].content; }
-    editBtn.classList.add('hidden'); saveBtn.classList.remove('hidden'); cancelEditBtn.classList.remove('hidden');
+    editBtn.classList.add('hidden'); deleteBtn.classList.add('hidden'); saveBtn.classList.remove('hidden'); cancelEditBtn.classList.remove('hidden');
     visibilityBtn.classList.remove('hidden'); updateVisibilityIcon(); renderContent();
+  });
+
+  deleteBtn.addEventListener('click', function() {
+    deleteError.classList.add('hidden');
+    deleteModal.classList.remove('hidden');
+  });
+
+  function closeDeleteModal() {
+    deleteModal.classList.add('hidden');
+    deleteConfirmBtn.disabled = false;
+    deleteConfirmText.textContent = '确认';
+    deleteSpinner.classList.add('hidden');
+  }
+
+  deleteModal.addEventListener('click', function(e) {
+    if (e.target === deleteModal) closeDeleteModal();
+  });
+
+  deleteCancelBtn.addEventListener('click', closeDeleteModal);
+
+  deleteConfirmBtn.addEventListener('click', async function() {
+    var g = selectedGistDetail;
+    if (!g || g.isNew) return;
+    deleteConfirmBtn.disabled = true;
+    deleteConfirmText.textContent = '删除中...';
+    deleteSpinner.classList.remove('hidden');
+    deleteError.classList.add('hidden');
+    try {
+      await api('/gists/' + g.id, { method: 'DELETE' });
+      closeDeleteModal();
+      selectedGistDetail = null;
+      selectedGist = null;
+      allGists = allGists.filter(function(x) { return x.id !== g.id; });
+      gists = gists.filter(function(x) { return x.id !== g.id; });
+      resetContent();
+      renderGistList();
+    } catch (e) {
+      deleteError.textContent = '删除失败: ' + e.message;
+      deleteError.classList.remove('hidden');
+    } finally {
+      deleteConfirmBtn.disabled = false;
+      deleteConfirmText.textContent = '确认';
+      deleteSpinner.classList.add('hidden');
+    }
   });
 
   cancelEditBtn.addEventListener('click', function() {
@@ -613,12 +683,12 @@ const HTML = `<!DOCTYPE html>
       gists = gists.filter(function(x) { return x.id !== '__new__'; });
       selectedGistDetail = null; selectedGist = null;
       isEditing = false; editContent = {};
-      editBtn.classList.remove('hidden'); saveBtn.classList.add('hidden'); cancelEditBtn.classList.add('hidden');
+      editBtn.classList.remove('hidden'); deleteBtn.classList.remove('hidden'); saveBtn.classList.add('hidden'); cancelEditBtn.classList.add('hidden');
       visibilityBtn.classList.add('hidden'); renderGistList(); resetContent();
       return;
     }
     isEditing = false; editContent = {}; editFileNames = [];
-    editBtn.classList.remove('hidden'); saveBtn.classList.add('hidden'); cancelEditBtn.classList.add('hidden');
+    editBtn.classList.remove('hidden'); deleteBtn.classList.remove('hidden'); saveBtn.classList.add('hidden'); cancelEditBtn.classList.add('hidden');
     visibilityBtn.classList.add('hidden'); renderContent();
   });
 
@@ -658,7 +728,7 @@ const HTML = `<!DOCTYPE html>
         allGists.unshift(created); gists.unshift(created);
         selectedGistDetail = created; selectedGist = created;
         isEditing = false; editContent = {}; editFileNames = []; editPublic = false;
-        editBtn.classList.remove('hidden'); saveBtn.classList.add('hidden'); cancelEditBtn.classList.add('hidden');
+        editBtn.classList.remove('hidden'); deleteBtn.classList.remove('hidden'); saveBtn.classList.add('hidden'); cancelEditBtn.classList.add('hidden');
         visibilityBtn.classList.add('hidden'); setSaving(false);
         renderGistList(); renderContent(); loadComments();
         showToast('Gist 已创建', 'success');
@@ -666,7 +736,7 @@ const HTML = `<!DOCTYPE html>
         var updated = await api('/gists/' + g.id, { method: 'PATCH', body: JSON.stringify({ description: description, public: editPublic, files: files }) });
         selectedGistDetail = updated; selectedGist = updated;
         isEditing = false; editContent = {}; editFileNames = []; editPublic = false;
-        editBtn.classList.remove('hidden'); saveBtn.classList.add('hidden'); cancelEditBtn.classList.add('hidden');
+        editBtn.classList.remove('hidden'); deleteBtn.classList.remove('hidden'); saveBtn.classList.add('hidden'); cancelEditBtn.classList.add('hidden');
         visibilityBtn.classList.add('hidden'); setSaving(false);
         renderContent(); loadGists();
         showToast('Gist 已保存', 'success');
