@@ -124,7 +124,10 @@ const HTML = `<!DOCTYPE html>
     </div>
     <div class="space-y-4">
       <div>
-        <label class="block text-sm font-medium text-gray-300 mb-1">Personal Access Token</label>
+        <div class="flex items-center justify-between mb-1">
+          <label class="text-sm font-medium text-gray-300">Personal Access Token</label>
+          <span id="token-error" class="text-sm text-red-400 hidden"></span>
+        </div>
         <input id="token-input" type="password" placeholder="ghp_xxxxxxxxxxxxxxxxxxxx"
           class="mono w-full px-3 py-2.5 bg-gray-800 border border-gray-700 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent">
         <p class="text-xs text-gray-500 mt-1.5">
@@ -132,8 +135,9 @@ const HTML = `<!DOCTYPE html>
           <a href="https://github.com/settings/tokens" target="_blank" class="text-blue-400 hover:underline">GitHub Settings</a> 创建 token
         </p>
       </div>
-      <button id="token-save-btn" class="w-full py-2.5 bg-blue-600 hover:bg-blue-700 rounded-lg font-medium text-sm transition-colors">
-        确认
+      <button id="token-save-btn" class="w-full py-2.5 bg-blue-600 hover:bg-blue-700 rounded-lg font-medium text-sm transition-colors disabled:opacity-60 disabled:cursor-not-allowed flex items-center justify-center gap-2">
+        <svg id="token-btn-spinner" class="hidden animate-spin w-4 h-4" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
+        <span id="token-btn-text">确认</span>
       </button>
     </div>
   </div>
@@ -261,6 +265,9 @@ const HTML = `<!DOCTYPE html>
   const tokenModal = $('#token-modal');
   const tokenInput = $('#token-input');
   const tokenSaveBtn = $('#token-save-btn');
+  const tokenBtnText = $('#token-btn-text');
+  const tokenBtnSpinner = $('#token-btn-spinner');
+  const tokenError = $('#token-error');
   const app = $('#app');
   const refreshBtn = $('#refresh-btn');
   const logoutBtn = $('#logout-btn');
@@ -365,9 +372,11 @@ const HTML = `<!DOCTYPE html>
 
   tokenSaveBtn.addEventListener('click', async function() {
     var val = tokenInput.value.trim();
-    if (!val) { showToast('请输入 Token', 'error'); return; }
+    if (!val) { tokenError.textContent = '请输入 Token'; tokenError.classList.remove('hidden'); return; }
+    tokenError.classList.add('hidden');
     tokenSaveBtn.disabled = true;
-    tokenSaveBtn.textContent = '验证中...';
+    tokenBtnText.textContent = '验证中...';
+    tokenBtnSpinner.classList.remove('hidden');
     try {
       var res = await fetch('/login', {
         method: 'POST',
@@ -379,17 +388,19 @@ const HTML = `<!DOCTYPE html>
         throw new Error(err.message || 'Invalid token');
       }
       tokenInput.value = '';
-      tokenSaveBtn.disabled = false;
-      tokenSaveBtn.textContent = '确认';
       var user = await api('/user');
       userInfo.textContent = user.login;
       tokenModal.classList.add('hidden');
       app.classList.remove('hidden');
       loadGists();
     } catch (e) {
+      tokenError.textContent = 'Token 无效: ' + e.message;
+      tokenError.classList.remove('hidden');
+      tokenInput.value = '';
+    } finally {
       tokenSaveBtn.disabled = false;
-      tokenSaveBtn.textContent = '确认';
-      showToast('Token 验证失败: ' + e.message, 'error');
+      tokenBtnText.textContent = '确认';
+      tokenBtnSpinner.classList.add('hidden');
     }
   });
 
