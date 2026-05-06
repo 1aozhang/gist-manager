@@ -31,6 +31,7 @@ async function proxyApi(request, path) {
   headers.set('Authorization', `token ${token}`);
   headers.set('Accept', 'application/vnd.github+json');
   headers.set('X-GitHub-Api-Version', '2022-11-28');
+  headers.set('User-Agent', 'gist-manager');
 
   let body = null;
   if (request.method !== 'GET' && request.method !== 'HEAD') {
@@ -61,10 +62,11 @@ async function handleLogin(request) {
   }
   // Verify token against GitHub
   const check = await fetch(`${GITHUB_API}/user`, {
-    headers: { 'Authorization': `token ${token}`, 'Accept': 'application/vnd.github+json' },
+    headers: { 'Authorization': `token ${token}`, 'Accept': 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28', 'User-Agent': 'gist-manager' },
   });
   if (!check.ok) {
-    return new Response(JSON.stringify({ message: 'Invalid token' }), { status: 401,
+    const err = await check.json().catch(() => ({}));
+    return new Response(JSON.stringify({ message: err.message || `GitHub API error: ${check.status}` }), { status: 401,
       headers: { 'Content-Type': 'application/json' } });
   }
   const res = new Response(JSON.stringify({ ok: true }), {
