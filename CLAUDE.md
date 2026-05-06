@@ -6,26 +6,41 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 A single-page GitHub Gist Manager with two deployment modes:
 
-- **`gist-manager.html`** — Standalone SPA. Token in localStorage, calls GitHub API directly.
-- **`worker.js`** — Cloudflare Worker. Token in httpOnly cookie, worker proxies all API calls to GitHub. Serves the same SPA with modified JS (no localStorage, calls `/api/*` endpoints).
+- **`gist-manager.html`** — Standalone SPA. Token in localStorage, calls GitHub API directly from the browser.
+- **`_worker.js`** — Cloudflare Pages deployment. Token in httpOnly cookie, all API calls proxied through the worker. The file is auto-detected by Cloudflare Pages as a Workers function.
+
+`worker.js` is a copy of `_worker.js` — kept for reference. Changes should be made to both files, or make `_worker.js` the source of truth.
 
 ## Technology Preferences
 
 - HTML, JavaScript, CSS, and TailwindCSS are the preferred stack.
-- All code should be delivered in a single HTML file unless otherwise specified.
+- All SPA code should be in a single HTML file (`gist-manager.html`).
+- The worker runs on Cloudflare's runtime — no Node.js APIs, only Web Standard APIs.
 
-## Architecture
+## Architecture — SPA (`gist-manager.html`)
 
 - **Auth**: GitHub Personal Access Token stored in `localStorage`, verified via `GET /user`
-- **API**: All calls to `https://api.github.com` with header `Authorization: token <token>`, `Accept: application/vnd.github+json`, `X-GitHub-Api-Version: 2022-11-28`
-- **State**: Module-scoped variables inside an IIFE — `token`, `gists`, `allGists`, `selectedGistDetail`, `isEditing`, `editContent`, `editFileNames`, `editPublic`, `activeFileName`
+- **API**: Direct `fetch` to `https://api.github.com` with `Authorization: token <token>`
+- **State**: Module-scoped variables inside an IIFE
 - **Rendering**: DOM manipulation via `innerHTML` + event delegation, no virtual DOM
-- **Styling**: TailwindCSS CDN, dark theme (`bg-gray-950`), Inter + JetBrains Mono fonts
 
-## Key patterns
+## Architecture — Worker (`_worker.js`)
 
-- Gist list: `renderGistList()` rebuilds sidebar from `gists` array; search filters `allGists` into `gists`
-- Edit mode: toggled by `isEditing` flag; `renderContent()` checks it to show inputs vs static text
-- File rename: `editFileNames` tracks current filenames; on input change, `editContent` keys are migrated; on save, old names not in `editFileNames` are marked `null` (deleted)
-- Save: new gists use `POST /gists`, existing use `PATCH /gists/{id}`; loading state via `setSaving()` prevents double-submit
-- Draft gists: `isNew: true`, `id: '__new__'`, shown in list with blue badge; cancelled drafts are removed from arrays
+- **Serves**: The SPA as an inline HTML template literal (no KV or static assets needed)
+- **Auth**: `POST /login` verifies token against GitHub, sets `gh_token` cookie (httpOnly, Secure, SameSite=Lax)
+- **API proxy**: All `/api/*` requests are forwarded to `https://api.github.com/*` with the token from the cookie
+- **Logout**: `POST /logout` clears the cookie
+
+The inline HTML in the worker is a modified version of `gist-manager.html` with these differences:
+- No `localStorage`, no `token` variable
+- `api()` calls `/api` + path instead of `https://api.github.com` + path
+- Login/logout use `POST /login` and `POST /logout` endpoints
+- `initAuth()` tries `/api/user` — if it fails, shows the login modal
+
+## Key patterns (shared)
+
+- Gist list: `renderGistList()` rebuilds sidebar; search filters `allGists` into `gists`
+- Edit mode: toggled by `isEditing` flag; `renderContent()` shows inputs vs static text
+- File rename: `editFileNames` tracks names; old names not in the list are marked `null` on save
+- Save: new gists → `POST /gists`, existing → `PATCH /gists/{id}`; `setSaving()` prevents double-submit
+- Draft gists: `isNew: true`, added to `allGists` on create, removed from arrays on cancel

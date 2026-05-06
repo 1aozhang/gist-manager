@@ -14,24 +14,44 @@ A single-page web application for managing GitHub Gists — list, view, create, 
 - **Comments** — view and post comments on existing gists
 - **Saving indicator** — loading overlay and disabled buttons prevent duplicate submissions
 
-## Deployment Options
+## Local Usage
 
-### Option A: Static HTML
+1. Open `gist-manager.html` directly in a browser
+2. Create a [GitHub Personal Access Token](https://github.com/settings/tokens) with the `gist` scope
+3. Paste the token and click 确认
 
-Open `gist-manager.html` directly in a browser. The token is stored in `localStorage`. API calls go directly to `api.github.com`.
+The token is stored in `localStorage`. All API calls go directly from the browser to `api.github.com`.
 
-### Option B: Cloudflare Worker
+## Cloudflare Deployment
 
-Deploy `worker.js` as a Cloudflare Worker:
+The project supports one-click Git deployment via Cloudflare Pages.
 
-```bash
-npx wrangler deploy worker.js
-```
+### Setup
 
-In this mode:
-- The token is stored in an **httpOnly, Secure** cookie — never exposed to JavaScript
-- All GitHub API calls are proxied through the worker — the browser never contacts GitHub directly
-- The worker verifies tokens on login and injects the `Authorization` header server-side
+1. Log in to [Cloudflare Dashboard](https://dash.cloudflare.com) → **Workers & Pages**
+2. Click **Create** → **Pages** → **Connect to Git**
+3. Authorize and select your fork of this repository
+4. Configure build settings:
+   - **Build command**: (leave empty)
+   - **Output directory**: (leave empty)
+5. Click **Save and Deploy**
+
+Cloudflare Pages automatically detects `_worker.js` in the repository root and runs it as a Worker. Every push to the default branch triggers a new deployment.
+
+### How it works
+
+- The token is stored in an **httpOnly, Secure** cookie — never exposed to browser JavaScript
+- All GitHub API calls are proxied through the worker — the browser only talks to the worker's domain
+- The worker reads the token from the cookie, attaches the `Authorization` header, and forwards requests to `api.github.com`
+
+### Routes
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/` | Serves the SPA |
+| `POST` | `/login` | Verifies token against GitHub, sets cookie |
+| `POST` | `/logout` | Clears the cookie |
+| `*` | `/api/*` | Proxies to `api.github.com` with auth |
 
 ## Token Permissions
 
@@ -45,17 +65,18 @@ The token requires the **gist** permission to:
 | Layer | Technology |
 |-------|-----------|
 | UI | TailwindCSS (CDN) |
-| Logic | Vanilla JavaScript (ES6+) |
+| Logic | Vanilla JavaScript |
 | API | GitHub REST API v2022-11-28 |
-| Auth (static) | Token in `localStorage` + `Authorization` header |
-| Auth (worker) | Token in httpOnly cookie + server-side proxy |
+| Auth (local) | Token in `localStorage` |
+| Auth (deployed) | Token in httpOnly cookie, server-side proxy |
 
 ## File Structure
 
 ```
 .
-├── gist-manager.html   # Standalone SPA (localStorage token)
-├── worker.js           # Cloudflare Worker (cookie-based token)
+├── gist-manager.html   # Standalone SPA — open in browser
+├── worker.js           # Worker source (same as _worker.js)
+├── _worker.js          # Cloudflare Pages entry point
 ├── CLAUDE.md           # Claude Code guidance
 └── README.md           # This file
 ```
