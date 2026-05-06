@@ -767,6 +767,11 @@
       collectFileNames();
     }
 
+    for (const name of editFileNames) {
+      if (!name.trim()) { showToast('文件名不能为空', 'error'); return; }
+      if (!(editContent[name] ?? '').trim()) { showToast(`文件 "${name}" 内容不能为空`, 'error'); return; }
+    }
+
     const files = {};
     if (g.isNew) {
       for (const name of editFileNames) {

@@ -713,6 +713,12 @@ const HTML = `<!DOCTYPE html>
     var textareas = editorArea.querySelectorAll('textarea');
     textareas.forEach(function(ta) { editContent[ta.dataset.file] = ta.value; });
     if (isEditing) { collectFileNames(); }
+    for (var i = 0; i < editFileNames.length; i++) {
+      var fn = editFileNames[i];
+      if (!fn.trim()) { showToast('文件名不能为空', 'error'); return; }
+      if (!(editContent[fn] || '').trim()) { showToast('文件 "' + fn + '" 内容不能为空', 'error'); return; }
+    }
+
     var files = {};
     if (g.isNew) {
       editFileNames.forEach(function(name) { files[name] = { content: editContent[name] || '' }; });
