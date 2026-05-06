@@ -869,7 +869,6 @@ const HTML = `<!DOCTYPE html>
   function resetContent() {
     emptyState.classList.remove('hidden');
     gistContent.classList.add('hidden');
-    gistList.innerHTML = '<div class="flex items-center justify-center py-12 text-gray-500 text-sm">加载中...</div>';
   }
 
   initAuth();
