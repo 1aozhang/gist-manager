@@ -507,7 +507,7 @@ const HTML = `<!DOCTYPE html>
     editPublic = false;
     for (var name in draft.files) { editContent[name] = draft.files[name].content; }
     allGists.unshift(draft);
-    if (searchInput.value.trim()) { gists.unshift(draft); }
+    if (searchInput.value.trim()) { gists.unshift(draft); } else { gists = allGists; }
     renderGistList();
     editBtn.classList.add('hidden'); deleteBtn.classList.add('hidden');
     saveBtn.classList.remove('hidden');
@@ -665,6 +665,7 @@ const HTML = `<!DOCTYPE html>
       selectedGist = null;
       allGists = allGists.filter(function(x) { return x.id !== g.id; });
       gists = gists.filter(function(x) { return x.id !== g.id; });
+      if (!searchInput.value.trim()) gists = allGists;
       resetContent();
       renderGistList();
     } catch (e) {
@@ -682,6 +683,7 @@ const HTML = `<!DOCTYPE html>
     if (g && g.isNew) {
       allGists = allGists.filter(function(x) { return x.id !== '__new__'; });
       gists = gists.filter(function(x) { return x.id !== '__new__'; });
+      if (!searchInput.value.trim()) gists = allGists;
       selectedGistDetail = null; selectedGist = null;
       isEditing = false; editContent = {};
       editBtn.classList.remove('hidden'); deleteBtn.classList.remove('hidden'); saveBtn.classList.add('hidden'); cancelEditBtn.classList.add('hidden');
@@ -726,7 +728,8 @@ const HTML = `<!DOCTYPE html>
         var created = await api('/gists', { method: 'POST', body: JSON.stringify({ description: description, public: editPublic, files: files }) });
         allGists = allGists.filter(function(x) { return x.id !== '__new__'; });
         gists = gists.filter(function(x) { return x.id !== '__new__'; });
-        allGists.unshift(created); gists.unshift(created);
+        allGists.unshift(created);
+        if (searchInput.value.trim()) { gists.unshift(created); } else { gists = allGists; }
         selectedGistDetail = created; selectedGist = created;
         isEditing = false; editContent = {}; editFileNames = []; editPublic = false;
         editBtn.classList.remove('hidden'); deleteBtn.classList.remove('hidden'); saveBtn.classList.add('hidden'); cancelEditBtn.classList.add('hidden');

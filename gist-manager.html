@@ -460,6 +460,8 @@
     allGists.unshift(draft);
     if (searchInput.value.trim()) {
       gists.unshift(draft);
+    } else {
+      gists = allGists;
     }
     renderGistList();
 
@@ -686,6 +688,7 @@
       selectedGist = null;
       allGists = allGists.filter(x => x.id !== g.id);
       gists = gists.filter(x => x.id !== g.id);
+      if (!searchInput.value.trim()) gists = allGists;
       resetContent();
       renderGistList();
     } catch (e) {
@@ -704,6 +707,7 @@
       // Remove draft from lists
       allGists = allGists.filter(x => x.id !== '__new__');
       gists = gists.filter(x => x.id !== '__new__');
+      if (!searchInput.value.trim()) gists = allGists;
       selectedGistDetail = null;
       selectedGist = null;
       isEditing = false;
@@ -791,7 +795,7 @@
         allGists = allGists.filter(x => x.id !== '__new__');
         gists = gists.filter(x => x.id !== '__new__');
         allGists.unshift(created);
-        gists.unshift(created);
+        if (searchInput.value.trim()) { gists.unshift(created); } else { gists = allGists; }
         selectedGistDetail = created;
         selectedGist = created;
         isEditing = false;
