@@ -1,0 +1,824 @@
+// Cloudflare Worker — GitHub Gist Manager
+// Serves the SPA, stores the GitHub token in an httpOnly cookie, proxies API calls.
+
+const COOKIE_NAME = 'gh_token';
+const GITHUB_API = 'https://api.github.com';
+
+function getToken(request) {
+  const cookie = request.headers.get('Cookie') || '';
+  const match = cookie.match(new RegExp(`(?:^|;\\s*)${COOKIE_NAME}=([^;]*)`));
+  return match ? decodeURIComponent(match[1]) : null;
+}
+
+function setTokenCookie(headers, token) {
+  headers.append('Set-Cookie', `${COOKIE_NAME}=${encodeURIComponent(token)}; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=31536000`);
+}
+
+function clearTokenCookie(headers) {
+  headers.append('Set-Cookie', `${COOKIE_NAME}=; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=0`);
+}
+
+async function proxyApi(request, path) {
+  const token = getToken(request);
+  if (!token) {
+    return new Response(JSON.stringify({ message: 'Unauthorized' }), {
+      status: 401,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+  const url = GITHUB_API + path + (request.url.includes('?') ? '?' + request.url.split('?')[1] : '');
+  const headers = new Headers();
+  headers.set('Authorization', `token ${token}`);
+  headers.set('Accept', 'application/vnd.github+json');
+  headers.set('X-GitHub-Api-Version', '2022-11-28');
+
+  let body = null;
+  if (request.method !== 'GET' && request.method !== 'HEAD') {
+    body = await request.text();
+    if (body) headers.set('Content-Type', 'application/json');
+  }
+
+  const res = await fetch(url, { method: request.method, headers, body });
+  return new Response(res.body, {
+    status: res.status,
+    statusText: res.statusText,
+    headers: res.headers,
+  });
+}
+
+async function handleLogin(request) {
+  let token;
+  try {
+    const body = await request.json();
+    token = body.token;
+  } catch {
+    return new Response(JSON.stringify({ message: 'Invalid JSON' }), { status: 400,
+      headers: { 'Content-Type': 'application/json' } });
+  }
+  if (!token) {
+    return new Response(JSON.stringify({ message: 'Token required' }), { status: 400,
+      headers: { 'Content-Type': 'application/json' } });
+  }
+  // Verify token against GitHub
+  const check = await fetch(`${GITHUB_API}/user`, {
+    headers: { 'Authorization': `token ${token}`, 'Accept': 'application/vnd.github+json' },
+  });
+  if (!check.ok) {
+    return new Response(JSON.stringify({ message: 'Invalid token' }), { status: 401,
+      headers: { 'Content-Type': 'application/json' } });
+  }
+  const res = new Response(JSON.stringify({ ok: true }), {
+    status: 200,
+    headers: { 'Content-Type': 'application/json' },
+  });
+  setTokenCookie(res.headers, token);
+  return res;
+}
+
+function handleLogout() {
+  const res = new Response(JSON.stringify({ ok: true }), {
+    status: 200,
+    headers: { 'Content-Type': 'application/json' },
+  });
+  clearTokenCookie(res.headers);
+  return res;
+}
+
+/* ── Inline HTML ──────────────────────────────────── */
+const HTML = `<!DOCTYPE html>
+<html lang="zh-CN" class="h-full">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>GitHub Gist Manager</title>
+<script src="https://cdn.tailwindcss.com"><\/script>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Inter:wght@400;500;600;700&display=swap');
+  body { font-family: 'Inter', sans-serif; }
+  .mono { font-family: 'JetBrains Mono', monospace; }
+  .gist-item { transition: all 0.15s ease; }
+  .gist-item:hover { background-color: rgba(255,255,255,0.05); }
+  .gist-item.active { background-color: rgba(59,130,246,0.15); border-left: 3px solid #3b82f6; }
+  pre { white-space: pre-wrap; word-break: break-word; }
+  textarea.code-editor { font-family: 'JetBrains Mono', monospace; tab-size: 2; }
+  .spinner { animation: spin 0.8s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  #saving-overlay { transition: opacity 0.2s ease; }
+  ::-webkit-scrollbar { width: 6px; height: 6px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: #4b5563; border-radius: 3px; }
+  ::-webkit-scrollbar-thumb:hover { background: #6b7280; }
+</style>
+</head>
+<body class="h-full bg-gray-950 text-gray-100">
+
+<!-- Token Setup Modal -->
+<div id="token-modal" class="fixed inset-0 z-50 flex items-center justify-center bg-black/70">
+  <div class="bg-gray-900 rounded-xl shadow-2xl w-full max-w-md p-6 mx-4 border border-gray-800">
+    <div class="text-center mb-6">
+      <svg class="w-12 h-12 mx-auto mb-3 text-blue-500" fill="currentColor" viewBox="0 0 24 24"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/></svg>
+      <h2 class="text-xl font-semibold">GitHub Gist Manager</h2>
+      <p class="text-gray-400 text-sm mt-1">输入你的 GitHub Token 以开始</p>
+    </div>
+    <div class="space-y-4">
+      <div>
+        <label class="block text-sm font-medium text-gray-300 mb-1">Personal Access Token</label>
+        <input id="token-input" type="password" placeholder="ghp_xxxxxxxxxxxxxxxxxxxx"
+          class="mono w-full px-3 py-2.5 bg-gray-800 border border-gray-700 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent">
+        <p class="text-xs text-gray-500 mt-1.5">
+          需要 <code class="text-gray-400">gist</code> 权限。去
+          <a href="https://github.com/settings/tokens" target="_blank" class="text-blue-400 hover:underline">GitHub Settings</a> 创建 token
+        </p>
+      </div>
+      <button id="token-save-btn" class="w-full py-2.5 bg-blue-600 hover:bg-blue-700 rounded-lg font-medium text-sm transition-colors">
+        确认
+      </button>
+    </div>
+  </div>
+</div>
+
+<!-- Main App -->
+<div id="app" class="h-full flex flex-col hidden">
+  <header class="flex items-center justify-between px-4 py-2.5 bg-gray-900 border-b border-gray-800 shrink-0">
+    <div class="flex items-center gap-2">
+      <svg class="w-5 h-5 text-blue-500" fill="currentColor" viewBox="0 0 24 24"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/></svg>
+      <span class="font-semibold text-sm">Gist Manager</span>
+    </div>
+    <div class="flex items-center gap-3">
+      <span id="user-info" class="text-sm text-gray-400"></span>
+      <button id="refresh-btn" class="px-3 py-1.5 text-xs bg-gray-800 hover:bg-gray-700 rounded-md transition-colors flex items-center gap-1">
+        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M23 4v6h-6M1 20v-6h6"/><path d="M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15"/></svg>
+        刷新
+      </button>
+      <button id="logout-btn" class="px-3 py-1.5 text-xs bg-gray-800 hover:bg-gray-700 rounded-md transition-colors">
+        更换Token
+      </button>
+    </div>
+  </header>
+
+  <div class="flex flex-1 overflow-hidden">
+    <aside class="w-72 shrink-0 bg-gray-900 border-r border-gray-800 flex flex-col">
+      <div class="px-3 py-3 border-b border-gray-800 flex gap-2">
+        <input id="search-input" type="text" placeholder="搜索 Gist..."
+          class="flex-1 px-3 py-1.5 bg-gray-800 border border-gray-700 rounded-md text-xs focus:outline-none focus:ring-1 focus:ring-blue-500">
+        <button id="new-gist-btn" class="shrink-0 px-3 py-1.5 text-xs bg-blue-600 hover:bg-blue-700 rounded-md transition-colors flex items-center gap-1">
+          <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+          新建
+        </button>
+      </div>
+      <div id="gist-list" class="flex-1 overflow-y-auto">
+        <div class="flex items-center justify-center py-12 text-gray-500 text-sm">加载中...</div>
+      </div>
+    </aside>
+
+    <main class="flex-1 flex flex-col overflow-hidden bg-gray-950">
+      <div id="empty-state" class="flex-1 flex items-center justify-center">
+        <div class="text-center text-gray-500">
+          <svg class="w-16 h-16 mx-auto mb-4 text-gray-700" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><path d="M14.5 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/></svg>
+          <p class="text-sm">选择左侧的 Gist 查看内容</p>
+        </div>
+      </div>
+
+      <div id="gist-content" class="flex-1 flex flex-col overflow-hidden hidden relative">
+        <div id="saving-overlay" class="absolute inset-0 z-20 bg-gray-950/80 flex items-center justify-center hidden">
+          <div class="flex flex-col items-center gap-3">
+            <svg class="spinner w-8 h-8 text-blue-400" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
+            <span class="text-sm text-gray-300">正在保存...</span>
+          </div>
+        </div>
+        <div id="loading-overlay" class="absolute inset-0 z-20 bg-gray-950/80 flex items-center justify-center hidden">
+          <div class="flex flex-col items-center gap-3">
+            <svg class="spinner w-8 h-8 text-blue-400" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
+            <span class="text-sm text-gray-300">正在加载...</span>
+          </div>
+        </div>
+
+        <div class="flex items-center justify-between px-4 py-2 border-b border-gray-800 bg-gray-900 shrink-0">
+          <div>
+            <h2 id="gist-title" class="text-sm font-semibold text-gray-200"></h2>
+            <p id="gist-meta" class="text-xs text-gray-500 mt-0.5"></p>
+          </div>
+          <div class="flex items-center gap-2">
+            <button id="edit-btn" class="px-3 py-1.5 text-xs bg-gray-800 hover:bg-gray-700 rounded-md transition-colors flex items-center gap-1">
+              <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+              编辑
+            </button>
+            <button id="save-btn" class="px-3 py-1.5 text-xs bg-blue-600 hover:bg-blue-700 rounded-md transition-colors flex items-center gap-1 hidden">
+              <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M19 21H5a2 2 0 01-2-2V5a2 2 0 012-2h11l5 5v11a2 2 0 01-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
+              保存
+            </button>
+            <button id="cancel-edit-btn" class="px-3 py-1.5 text-xs bg-gray-800 hover:bg-gray-700 rounded-md transition-colors hidden">
+              取消
+            </button>
+            <button id="visibility-btn" class="px-2 py-1.5 text-xs bg-gray-800 hover:bg-gray-700 rounded-md transition-colors hidden" title="切换可见性">
+              <svg id="visibility-icon-lock" class="w-3.5 h-3.5 text-yellow-500" fill="currentColor" viewBox="0 0 24 24"><path d="M18 8h-1V6c0-2.76-2.24-5-5-5S7 3.24 7 6v2H6c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V10c0-1.1-.9-2-2-2zm-6 9c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2zm3.1-9H8.9V6c0-1.71 1.39-3.1 3.1-3.1s3.1 1.39 3.1 3.1v2z"/></svg>
+              <svg id="visibility-icon-globe" class="w-3.5 h-3.5 text-gray-400 hidden" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 014 10 15.3 15.3 0 01-4 10 15.3 15.3 0 01-4-10 15.3 15.3 0 014-10z"/></svg>
+            </button>
+            <a id="gist-link" href="#" target="_blank" class="px-3 py-1.5 text-xs text-gray-400 hover:text-gray-200 transition-colors flex items-center gap-1">
+              <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+              GitHub
+            </a>
+          </div>
+        </div>
+
+        <div id="file-tabs" class="flex gap-0 px-4 bg-gray-900 border-b border-gray-800 shrink-0 overflow-x-auto"></div>
+        <div id="editor-area" class="flex-1 overflow-hidden flex flex-col"></div>
+
+        <div id="comments-section" class="border-t border-gray-800 bg-gray-900 shrink-0" style="max-height: 40%;">
+          <div class="flex items-center justify-between px-4 py-2 border-b border-gray-800">
+            <span class="text-xs font-semibold text-gray-300">评论 (<span id="comment-count">0</span>)</span>
+            <button id="toggle-comments-btn" class="text-xs text-gray-400 hover:text-gray-200">
+              <svg id="comments-chevron" class="w-4 h-4 transition-transform" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><polyline points="6 9 12 15 18 9"/></svg>
+            </button>
+          </div>
+          <div id="comments-body" class="overflow-y-auto" style="max-height: 300px;">
+            <div id="comments-list" class="divide-y divide-gray-800"></div>
+            <div class="p-3 border-t border-gray-800">
+              <textarea id="comment-input" rows="2" placeholder="写评论..."
+                class="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded-md text-xs resize-none focus:outline-none focus:ring-1 focus:ring-blue-500"></textarea>
+              <div class="flex justify-end mt-2">
+                <button id="post-comment-btn" class="px-3 py-1.5 text-xs bg-green-700 hover:bg-green-600 rounded-md transition-colors">
+                  提交评论
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <div id="toast" class="fixed bottom-4 right-4 z-50 px-4 py-2.5 rounded-lg text-sm font-medium shadow-lg transition-all duration-300 translate-y-20 opacity-0 pointer-events-none"></div>
+</div>
+
+<script>
+(function() {
+  const $ = (s) => document.querySelector(s);
+  const $$ = (s) => document.querySelectorAll(s);
+
+  const tokenModal = $('#token-modal');
+  const tokenInput = $('#token-input');
+  const tokenSaveBtn = $('#token-save-btn');
+  const app = $('#app');
+  const refreshBtn = $('#refresh-btn');
+  const logoutBtn = $('#logout-btn');
+  const userInfo = $('#user-info');
+  const searchInput = $('#search-input');
+  const newGistBtn = $('#new-gist-btn');
+  const gistList = $('#gist-list');
+  const emptyState = $('#empty-state');
+  const gistContent = $('#gist-content');
+  const gistTitle = $('#gist-title');
+  const gistMeta = $('#gist-meta');
+  const gistLink = $('#gist-link');
+  const editBtn = $('#edit-btn');
+  const saveBtn = $('#save-btn');
+  const cancelEditBtn = $('#cancel-edit-btn');
+  const visibilityBtn = $('#visibility-btn');
+  const visibilityLock = $('#visibility-icon-lock');
+  const visibilityGlobe = $('#visibility-icon-globe');
+  const savingOverlay = $('#saving-overlay');
+  const loadingOverlay = $('#loading-overlay');
+  const fileTabs = $('#file-tabs');
+  const editorArea = $('#editor-area');
+  const commentsSection = $('#comments-section');
+  const commentsList = $('#comments-list');
+  const commentCount = $('#comment-count');
+  const commentInput = $('#comment-input');
+  const postCommentBtn = $('#post-comment-btn');
+  const toggleCommentsBtn = $('#toggle-comments-btn');
+  const commentsChevron = $('#comments-chevron');
+  const commentsBody = $('#comments-body');
+  const toast = $('#toast');
+
+  let gists = [];
+  let selectedGist = null;
+  let selectedGistDetail = null;
+  let isEditing = false;
+  let editContent = {};
+  let editFileNames = [];
+  let editPublic = false;
+  let activeFileName = null;
+  let allGists = [];
+
+  function setSaving(active) {
+    if (active) {
+      saveBtn.disabled = true;
+      saveBtn.innerHTML = '<svg class="spinner w-3.5 h-3.5" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/><\/svg> 保存中...';
+      saveBtn.classList.add('opacity-70', 'cursor-not-allowed');
+      cancelEditBtn.disabled = true;
+      cancelEditBtn.classList.add('opacity-50', 'cursor-not-allowed');
+      savingOverlay.classList.remove('hidden');
+    } else {
+      saveBtn.disabled = false;
+      saveBtn.innerHTML = '<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M19 21H5a2 2 0 01-2-2V5a2 2 0 012-2h11l5 5v11a2 2 0 01-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/><\/svg> 保存';
+      saveBtn.classList.remove('opacity-70', 'cursor-not-allowed');
+      cancelEditBtn.disabled = false;
+      cancelEditBtn.classList.remove('opacity-50', 'cursor-not-allowed');
+      savingOverlay.classList.add('hidden');
+    }
+  }
+
+  function showToast(msg, type) {
+    type = type || 'info';
+    var colors = { success: 'bg-green-600', error: 'bg-red-600', info: 'bg-gray-700' };
+    toast.className = 'fixed bottom-4 right-4 z-50 px-4 py-2.5 rounded-lg text-sm font-medium shadow-lg transition-all duration-300 ' + colors[type] + ' text-white';
+    toast.textContent = msg;
+    toast.style.transform = 'translateY(0)';
+    toast.style.opacity = '1';
+    clearTimeout(toast._t);
+    toast._t = setTimeout(function() {
+      toast.style.transform = 'translateY(80px)';
+      toast.style.opacity = '0';
+    }, 2500);
+  }
+
+  async function api(path, opts) {
+    opts = opts || {};
+    var headers = {
+      'Accept': 'application/vnd.github+json',
+      'X-GitHub-Api-Version': '2022-11-28',
+    };
+    if (opts.body) headers['Content-Type'] = 'application/json';
+    var res = await fetch('/api' + path, { method: opts.method || 'GET', headers: headers, body: opts.body || undefined });
+    if (!res.ok) {
+      var err = await res.json().catch(function() { return {}; });
+      throw new Error(err.message || 'HTTP ' + res.status);
+    }
+    return res.json();
+  }
+
+  async function initAuth() {
+    try {
+      var user = await api('/user');
+      userInfo.textContent = user.login;
+      tokenModal.classList.add('hidden');
+      app.classList.remove('hidden');
+      loadGists();
+    } catch (e) {
+      tokenModal.classList.remove('hidden');
+      app.classList.add('hidden');
+    }
+  }
+
+  tokenSaveBtn.addEventListener('click', async function() {
+    var val = tokenInput.value.trim();
+    if (!val) { showToast('请输入 Token', 'error'); return; }
+    tokenSaveBtn.disabled = true;
+    tokenSaveBtn.textContent = '验证中...';
+    try {
+      var res = await fetch('/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token: val }),
+      });
+      if (!res.ok) {
+        var err = await res.json().catch(function() { return {}; });
+        throw new Error(err.message || 'Invalid token');
+      }
+      tokenInput.value = '';
+      tokenSaveBtn.disabled = false;
+      tokenSaveBtn.textContent = '确认';
+      var user = await api('/user');
+      userInfo.textContent = user.login;
+      tokenModal.classList.add('hidden');
+      app.classList.remove('hidden');
+      loadGists();
+    } catch (e) {
+      tokenSaveBtn.disabled = false;
+      tokenSaveBtn.textContent = '确认';
+      showToast('Token 验证失败: ' + e.message, 'error');
+    }
+  });
+
+  tokenInput.addEventListener('keydown', function(e) {
+    if (e.key === 'Enter') tokenSaveBtn.click();
+  });
+
+  logoutBtn.addEventListener('click', async function() {
+    await fetch('/logout', { method: 'POST' });
+    gists = [];
+    allGists = [];
+    selectedGist = null;
+    selectedGistDetail = null;
+    isEditing = false;
+    tokenModal.classList.remove('hidden');
+    app.classList.add('hidden');
+    tokenInput.value = '';
+    resetContent();
+  });
+
+  refreshBtn.addEventListener('click', loadGists);
+
+  async function loadGists() {
+    gistList.innerHTML = '<div class="flex items-center justify-center py-12 text-gray-500 text-sm">加载中...</div>';
+    try {
+      allGists = await api('/gists?per_page=100');
+      gists = allGists;
+      renderGistList();
+    } catch (e) {
+      gistList.innerHTML = '<div class="flex items-center justify-center py-12 text-red-400 text-sm">' + e.message + '</div>';
+    }
+  }
+
+  function renderGistList() {
+    if (gists.length === 0) {
+      gistList.innerHTML = '<div class="flex items-center justify-center py-12 text-gray-500 text-sm">没有找到 Gist</div>';
+      return;
+    }
+    var selectedId = selectedGistDetail ? selectedGistDetail.id : null;
+    gistList.innerHTML = gists.map(function(g) {
+      var desc = g.description || (g.isNew ? '(新建 Gist)' : '(无描述)');
+      var filename = Object.keys(g.files)[0] || '?';
+      var active = g.id === selectedId ? ' active' : '';
+      var lockIcon = (!g.public && !g.isNew)
+        ? '<svg class="w-3 h-3 text-yellow-500 shrink-0" fill="currentColor" viewBox="0 0 24 24"><path d="M18 8h-1V6c0-2.76-2.24-5-5-5S7 3.24 7 6v2H6c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V10c0-1.1-.9-2-2-2zm-6 9c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2zm3.1-9H8.9V6c0-1.71 1.39-3.1 3.1-3.1s3.1 1.39 3.1 3.1v2z"/></svg>'
+        : '';
+      var badge = g.isNew
+        ? '<span class="text-[10px] text-blue-400">未保存</span>'
+        : '';
+      return '<div class="gist-item px-3 py-2.5 cursor-pointer border-b border-gray-800/50' + active + '" data-id="' + g.id + '"><div class="text-xs font-medium text-gray-200 truncate flex items-center gap-1.5">' + lockIcon + escHtml(desc) + '</div><div class="text-xs text-gray-500 mt-0.5 flex items-center gap-2"><span class="mono text-[10px]">' + escHtml(filename) + '</span>' + badge + '</div></div>';
+    }).join('');
+    gistList.querySelectorAll('.gist-item').forEach(function(el) {
+      el.addEventListener('click', function() { selectGist(el.dataset.id); });
+    });
+  }
+
+  searchInput.addEventListener('input', function() {
+    var q = searchInput.value.toLowerCase();
+    gists = allGists.filter(function(g) {
+      return (g.description || '').toLowerCase().indexOf(q) !== -1 ||
+        Object.keys(g.files).some(function(f) { return f.toLowerCase().indexOf(q) !== -1; });
+    });
+    renderGistList();
+  });
+
+  newGistBtn.addEventListener('click', function() {
+    var draft = {
+      isNew: true, id: '__new__', description: '', public: false, html_url: '',
+      created_at: new Date().toISOString(), updated_at: new Date().toISOString(),
+      files: { 'new-file.txt': { content: '', language: 'Text', truncated: false } },
+    };
+    selectedGistDetail = draft;
+    selectedGist = draft;
+    isEditing = true;
+    editContent = {};
+    editFileNames = Object.keys(draft.files);
+    editPublic = false;
+    for (var name in draft.files) { editContent[name] = draft.files[name].content; }
+    allGists.unshift(draft);
+    if (searchInput.value.trim()) { gists.unshift(draft); }
+    renderGistList();
+    editBtn.classList.add('hidden');
+    saveBtn.classList.remove('hidden');
+    cancelEditBtn.classList.remove('hidden');
+    visibilityBtn.classList.remove('hidden');
+    updateVisibilityIcon();
+    renderContent();
+    commentsList.innerHTML = '<div class="p-4 text-xs text-gray-500 text-center">保存后才可以评论</div>';
+    commentCount.textContent = '0';
+  });
+
+  async function selectGist(id) {
+    gistList.querySelectorAll('.gist-item').forEach(function(el) { el.classList.remove('active'); });
+    var target = gistList.querySelector('[data-id="' + id + '"]');
+    if (target) target.classList.add('active');
+    var draft = allGists.find(function(g) { return g.id === id && g.isNew; });
+    if (draft) {
+      selectedGistDetail = draft; selectedGist = draft;
+      isEditing = true; editContent = {}; editFileNames = Object.keys(draft.files); editPublic = false;
+      for (var name in draft.files) { editContent[name] = draft.files[name].content; }
+      editBtn.classList.add('hidden'); saveBtn.classList.remove('hidden'); cancelEditBtn.classList.remove('hidden');
+      visibilityBtn.classList.remove('hidden'); updateVisibilityIcon(); renderContent();
+      commentsList.innerHTML = '<div class="p-4 text-xs text-gray-500 text-center">保存后才可以评论</div>';
+      commentCount.textContent = '0';
+      return;
+    }
+    emptyState.classList.add('hidden'); gistContent.classList.remove('hidden'); loadingOverlay.classList.remove('hidden');
+    try {
+      selectedGistDetail = await api('/gists/' + id);
+      selectedGist = selectedGistDetail;
+      isEditing = false;
+      renderContent();
+      loadComments();
+      loadingOverlay.classList.add('hidden');
+    } catch (e) {
+      loadingOverlay.classList.add('hidden');
+      gistContent.classList.add('hidden');
+      emptyState.classList.remove('hidden');
+      emptyState.innerHTML = '<div class="text-center text-red-400"><p class="text-sm">加载失败: ' + e.message + '</p></div>';
+      showToast('加载 Gist 失败: ' + e.message, 'error');
+    }
+  }
+
+  function renderContent() {
+    var g = selectedGistDetail;
+    if (!g) return;
+    emptyState.classList.add('hidden'); gistContent.classList.remove('hidden');
+    var desc = g.description || (g.isNew ? '(新建 Gist)' : '(无描述)');
+    if (isEditing) {
+      gistTitle.innerHTML = '<input id="desc-input" class="w-full bg-gray-800 border border-gray-700 rounded px-2 py-1 text-sm font-semibold text-gray-200 focus:outline-none focus:ring-1 focus:ring-blue-500" value="' + escAttr(g.description || '') + '" placeholder="Gist 描述">';
+    } else {
+      gistTitle.textContent = desc;
+    }
+    if (g.isNew) {
+      gistMeta.textContent = '未保存的 Gist'; gistLink.href = '#'; gistLink.classList.add('hidden');
+    } else {
+      gistMeta.textContent = '创建于 ' + new Date(g.created_at).toLocaleString('zh-CN') + ' · 更新于 ' + new Date(g.updated_at).toLocaleString('zh-CN');
+      gistLink.href = g.html_url; gistLink.classList.remove('hidden');
+    }
+    var files = g.files;
+    var fileNames = isEditing ? editFileNames : Object.keys(files);
+    if (isEditing) {
+      fileTabs.innerHTML = fileNames.map(function(name, i) {
+        var active = i === 0 ? 'border-blue-500 text-blue-400' : 'border-transparent text-gray-400';
+        return '<div class="flex items-center gap-0.5 shrink-0 border-b-2 ' + active + ' transition-colors" data-file="' + escAttr(name) + '"><input class="file-name-input bg-transparent text-xs mono px-2 py-1.5 outline-none text-gray-200 w-28" value="' + escAttr(name) + '" data-file="' + escAttr(name) + '" spellcheck="false">' + (fileNames.length > 1 ? '<button class="delete-file-btn text-gray-500 hover:text-red-400 px-1" data-file="' + escAttr(name) + '" title="删除文件">&times;</button>' : '') + '</div>';
+      }).join('') + '<button id="add-file-btn" class="shrink-0 px-2 py-1.5 text-xs text-gray-400 hover:text-gray-200 border-b-2 border-transparent" title="添加文件">+</button>';
+    } else {
+      fileTabs.innerHTML = fileNames.map(function(name, i) {
+        var active = i === 0 ? 'border-blue-500 text-blue-400' : 'border-transparent text-gray-400 hover:text-gray-200';
+        return '<button class="file-tab px-3 py-1.5 text-xs border-b-2 ' + active + ' transition-colors shrink-0" data-file="' + escAttr(name) + '">' + escHtml(name) + '</button>';
+      }).join('');
+    }
+    var renderName = (activeFileName && fileNames.indexOf(activeFileName) !== -1) ? activeFileName : fileNames[0];
+    var fileData = g.files[renderName] || { content: '', language: 'Text', truncated: false };
+    renderFileViewer(renderName, fileData);
+    highlightActiveTab(renderName);
+  }
+
+  function highlightActiveTab(name) {
+    activeFileName = name;
+    if (isEditing) {
+      fileTabs.querySelectorAll('[data-file]').forEach(function(el) {
+        if (el.dataset.file === name) { el.classList.add('border-blue-500'); el.classList.remove('border-transparent', 'text-gray-400'); }
+        else { el.classList.remove('border-blue-500'); el.classList.add('border-transparent', 'text-gray-400'); }
+      });
+    } else {
+      fileTabs.querySelectorAll('.file-tab').forEach(function(t) {
+        if (t.dataset.file === name) { t.classList.add('border-blue-500', 'text-blue-400'); t.classList.remove('border-transparent', 'text-gray-400', 'hover:text-gray-200'); }
+        else { t.classList.remove('border-blue-500', 'text-blue-400'); t.classList.add('border-transparent', 'text-gray-400', 'hover:text-gray-200'); }
+      });
+    }
+  }
+
+  function switchFile(name) {
+    var g = selectedGistDetail;
+    if (!g) return;
+    var file = g.files[name];
+    if (!file) return;
+    renderFileViewer(name, file);
+    highlightActiveTab(name);
+  }
+
+  function renderFileViewer(name, file) {
+    var content = isEditing ? (editContent[name] !== undefined ? editContent[name] : file.content) : file.content;
+    var truncated = file.truncated;
+    if (isEditing) {
+      editorArea.innerHTML = '<textarea class="code-editor w-full flex-1 p-4 bg-gray-900 text-gray-200 text-sm resize-none focus:outline-none border-none" style="flex:1;" data-file="' + escAttr(name) + '">' + escHtml(content) + '</textarea>' + (truncated ? '<p class="text-xs text-yellow-400 px-4 pb-2">⚠ 此文件内容被截断，编辑并保存可能丢失数据</p>' : '');
+    } else {
+      var lang = (file.language || 'plaintext').toLowerCase();
+      editorArea.innerHTML = '<div class="flex items-center justify-between px-4 py-1.5 bg-gray-900 shrink-0"><span class="text-[10px] text-gray-500 uppercase">' + lang + '</span><span class="text-[10px] text-gray-600">' + content.split('\\n').length + ' 行</span></div><div class="flex-1 overflow-auto"><pre class="p-4 text-sm mono text-gray-300 leading-relaxed">' + escHtml(content) + '</pre></div>';
+    }
+  }
+
+  editBtn.addEventListener('click', function() {
+    isEditing = true;
+    editContent = {};
+    var g = selectedGistDetail;
+    if (!g) return;
+    editFileNames = Object.keys(g.files);
+    editPublic = g.public;
+    for (var name in g.files) { editContent[name] = g.files[name].content; }
+    editBtn.classList.add('hidden'); saveBtn.classList.remove('hidden'); cancelEditBtn.classList.remove('hidden');
+    visibilityBtn.classList.remove('hidden'); updateVisibilityIcon(); renderContent();
+  });
+
+  cancelEditBtn.addEventListener('click', function() {
+    var g = selectedGistDetail;
+    if (g && g.isNew) {
+      allGists = allGists.filter(function(x) { return x.id !== '__new__'; });
+      gists = gists.filter(function(x) { return x.id !== '__new__'; });
+      selectedGistDetail = null; selectedGist = null;
+      isEditing = false; editContent = {};
+      editBtn.classList.remove('hidden'); saveBtn.classList.add('hidden'); cancelEditBtn.classList.add('hidden');
+      visibilityBtn.classList.add('hidden'); renderGistList(); resetContent();
+      return;
+    }
+    isEditing = false; editContent = {}; editFileNames = [];
+    editBtn.classList.remove('hidden'); saveBtn.classList.add('hidden'); cancelEditBtn.classList.add('hidden');
+    visibilityBtn.classList.add('hidden'); renderContent();
+  });
+
+  function updateVisibilityIcon() {
+    if (editPublic) { visibilityLock.classList.add('hidden'); visibilityGlobe.classList.remove('hidden'); }
+    else { visibilityLock.classList.remove('hidden'); visibilityGlobe.classList.add('hidden'); }
+  }
+
+  visibilityBtn.addEventListener('click', function() {
+    editPublic = !editPublic;
+    updateVisibilityIcon();
+  });
+
+  saveBtn.addEventListener('click', async function() {
+    var g = selectedGistDetail;
+    if (!g || saveBtn.disabled) return;
+    var textareas = editorArea.querySelectorAll('textarea');
+    textareas.forEach(function(ta) { editContent[ta.dataset.file] = ta.value; });
+    if (isEditing) { collectFileNames(); }
+    var files = {};
+    if (g.isNew) {
+      editFileNames.forEach(function(name) { files[name] = { content: editContent[name] || '' }; });
+    } else {
+      Object.keys(g.files).forEach(function(oldName) {
+        if (editFileNames.indexOf(oldName) === -1) { files[oldName] = null; }
+      });
+      editFileNames.forEach(function(name) { files[name] = { content: editContent[name] || '' }; });
+    }
+    var descInput = document.getElementById('desc-input');
+    var description = descInput ? descInput.value.trim() : g.description;
+    setSaving(true);
+    try {
+      if (g.isNew) {
+        var created = await api('/gists', { method: 'POST', body: JSON.stringify({ description: description, public: editPublic, files: files }) });
+        allGists = allGists.filter(function(x) { return x.id !== '__new__'; });
+        gists = gists.filter(function(x) { return x.id !== '__new__'; });
+        allGists.unshift(created); gists.unshift(created);
+        selectedGistDetail = created; selectedGist = created;
+        isEditing = false; editContent = {}; editFileNames = []; editPublic = false;
+        editBtn.classList.remove('hidden'); saveBtn.classList.add('hidden'); cancelEditBtn.classList.add('hidden');
+        visibilityBtn.classList.add('hidden'); setSaving(false);
+        renderGistList(); renderContent(); loadComments();
+        showToast('Gist 已创建', 'success');
+      } else {
+        var updated = await api('/gists/' + g.id, { method: 'PATCH', body: JSON.stringify({ description: description, public: editPublic, files: files }) });
+        selectedGistDetail = updated; selectedGist = updated;
+        isEditing = false; editContent = {}; editFileNames = []; editPublic = false;
+        editBtn.classList.remove('hidden'); saveBtn.classList.add('hidden'); cancelEditBtn.classList.add('hidden');
+        visibilityBtn.classList.add('hidden'); setSaving(false);
+        renderContent(); loadGists();
+        showToast('Gist 已保存', 'success');
+      }
+    } catch (e) {
+      setSaving(false);
+      showToast('保存失败: ' + e.message, 'error');
+    }
+  });
+
+  fileTabs.addEventListener('click', function(e) {
+    var g = selectedGistDetail;
+    if (!g) return;
+    if (e.target.closest('#add-file-btn')) {
+      var base = 'new-file', newName = base + '.txt', n = 1;
+      while (editFileNames.indexOf(newName) !== -1) { newName = base + '-' + n + '.txt'; n++; }
+      editFileNames.push(newName); editContent[newName] = '';
+      var ta = editorArea.querySelector('textarea');
+      if (ta) editContent[ta.dataset.file] = ta.value;
+      renderContent();
+      renderFileViewer(newName, { content: '', language: 'Text', truncated: false });
+      highlightActiveTab(newName);
+      return;
+    }
+    var delBtn = e.target.closest('.delete-file-btn');
+    if (delBtn) {
+      var name = delBtn.dataset.file;
+      editFileNames = editFileNames.filter(function(f) { return f !== name; });
+      delete editContent[name];
+      var ta2 = editorArea.querySelector('textarea');
+      if (ta2) editContent[ta2.dataset.file] = ta2.value;
+      renderContent();
+      var first = editFileNames[0];
+      if (first) { renderFileViewer(first, { content: editContent[first] || '', language: 'Text', truncated: false }); highlightActiveTab(first); }
+      return;
+    }
+    if (isEditing) {
+      var wrapper = e.target.closest('[data-file]');
+      if (!wrapper || e.target.tagName === 'INPUT' || e.target.closest('button')) return;
+      var fname = wrapper.dataset.file;
+      var ta3 = editorArea.querySelector('textarea');
+      if (ta3) editContent[ta3.dataset.file] = ta3.value;
+      renderFileViewer(fname, { content: editContent[fname] || '', language: 'Text', truncated: false });
+      highlightActiveTab(fname);
+    } else {
+      var tab = e.target.closest('.file-tab');
+      if (!tab) return;
+      switchFile(tab.dataset.file);
+    }
+  });
+
+  fileTabs.addEventListener('input', function(e) {
+    if (!e.target.classList.contains('file-name-input')) return;
+    var oldName = e.target.dataset.file;
+    var newName = e.target.value;
+    var idx = editFileNames.indexOf(oldName);
+    if (idx !== -1) {
+      editFileNames[idx] = newName;
+      e.target.dataset.file = newName;
+      if (editContent[oldName] !== undefined) { editContent[newName] = editContent[oldName]; delete editContent[oldName]; }
+      var ta = editorArea.querySelector('textarea');
+      if (ta && ta.dataset.file === oldName) { ta.dataset.file = newName; }
+      var wrapper = e.target.closest('[data-file]');
+      if (wrapper) wrapper.dataset.file = newName;
+      var delBtn = wrapper ? wrapper.querySelector('.delete-file-btn') : null;
+      if (delBtn) delBtn.dataset.file = newName;
+    }
+  });
+
+  function collectFileNames() {
+    document.querySelectorAll('.file-name-input').forEach(function(inp) {
+      var oldName = inp.dataset.file;
+      var newName = inp.value;
+      if (oldName !== newName) {
+        var idx = editFileNames.indexOf(oldName);
+        if (idx !== -1) editFileNames[idx] = newName;
+        if (editContent[oldName] !== undefined) { editContent[newName] = editContent[oldName]; delete editContent[oldName]; }
+        inp.dataset.file = newName;
+      }
+    });
+  }
+
+  async function loadComments() {
+    var g = selectedGistDetail;
+    if (!g) return;
+    try {
+      var comments = await api('/gists/' + g.id + '/comments?per_page=100');
+      renderComments(comments);
+    } catch (e) {
+      commentsList.innerHTML = '<div class="p-4 text-xs text-red-400">' + e.message + '</div>';
+    }
+  }
+
+  function renderComments(comments) {
+    commentCount.textContent = comments.length;
+    if (comments.length === 0) {
+      commentsList.innerHTML = '<div class="p-4 text-xs text-gray-500 text-center">暂无评论</div>';
+      return;
+    }
+    commentsList.innerHTML = comments.map(function(c) {
+      return '<div class="px-4 py-3"><div class="flex items-center gap-2 mb-1.5"><img src="' + escAttr(c.user ? c.user.avatar_url : '') + '" class="w-5 h-5 rounded-full" alt=""><span class="text-xs font-medium text-gray-300">' + escHtml(c.user ? c.user.login : '?') + '</span><span class="text-[10px] text-gray-600">' + new Date(c.created_at).toLocaleString('zh-CN') + '</span></div><div class="text-xs text-gray-400 leading-relaxed ml-7">' + escHtml(c.body) + '</div></div>';
+    }).join('');
+  }
+
+  postCommentBtn.addEventListener('click', async function() {
+    var g = selectedGistDetail;
+    if (!g) return;
+    var body = commentInput.value.trim();
+    if (!body) { showToast('请输入评论内容', 'error'); return; }
+    try {
+      await api('/gists/' + g.id + '/comments', { method: 'POST', body: JSON.stringify({ body: body }) });
+      commentInput.value = '';
+      showToast('评论已提交', 'success');
+      loadComments();
+    } catch (e) {
+      showToast('评论失败: ' + e.message, 'error');
+    }
+  });
+
+  toggleCommentsBtn.addEventListener('click', function() {
+    var hidden = commentsBody.style.display === 'none';
+    commentsBody.style.display = hidden ? '' : 'none';
+    commentsChevron.style.transform = hidden ? '' : 'rotate(180deg)';
+  });
+
+  function escHtml(s) { return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
+  function escAttr(s) { return String(s).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
+
+  function resetContent() {
+    emptyState.classList.remove('hidden');
+    gistContent.classList.add('hidden');
+    gistList.innerHTML = '<div class="flex items-center justify-center py-12 text-gray-500 text-sm">加载中...</div>';
+  }
+
+  initAuth();
+})();
+<\/script>
+</body>
+</html>`;
+
+/* ── Request router ──────────────────────────────── */
+export default {
+  async fetch(request, env, ctx) {
+    const url = new URL(request.url);
+    const path = url.pathname;
+
+    // Login
+    if (path === '/login' && request.method === 'POST') {
+      return handleLogin(request);
+    }
+
+    // Logout
+    if (path === '/logout' && request.method === 'POST') {
+      return handleLogout();
+    }
+
+    // API proxy
+    if (path.startsWith('/api/')) {
+      const apiPath = path.replace('/api', '');
+      return proxyApi(request, apiPath);
+    }
+
+    // Serve the SPA
+    return new Response(HTML, {
+      headers: { 'Content-Type': 'text/html; charset=utf-8' },
+    });
+  },
+};
