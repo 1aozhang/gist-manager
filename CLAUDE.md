@@ -9,7 +9,6 @@ A single-page GitHub Gist Manager with two deployment modes:
 - **`gist-manager.html`** — Standalone SPA. Token in localStorage, calls GitHub API directly from the browser.
 - **`_worker.js`** — Cloudflare Pages deployment. Token in httpOnly cookie, all API calls proxied through the worker. The file is auto-detected by Cloudflare Pages as a Workers function.
 
-`worker.js` is a copy of `_worker.js` — kept for reference. Changes should be made to both files, or make `_worker.js` the source of truth.
 
 ## Technology Preferences
 

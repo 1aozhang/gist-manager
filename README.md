@@ -75,7 +75,7 @@ The token requires the **gist** permission to:
 ```
 .
 ├── gist-manager.html   # Standalone SPA — open in browser
-├── worker.js           # Worker source (same as _worker.js)
+
 ├── _worker.js          # Cloudflare Pages entry point
 ├── CLAUDE.md           # Claude Code guidance
 └── README.md           # This file
