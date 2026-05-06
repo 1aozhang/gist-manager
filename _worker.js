@@ -380,6 +380,7 @@ const HTML = `<!DOCTYPE html>
       var err = await res.json().catch(function() { return {}; });
       throw new Error(err.message || 'HTTP ' + res.status);
     }
+    if (res.status === 204) return null;
     return res.json();
   }
 
