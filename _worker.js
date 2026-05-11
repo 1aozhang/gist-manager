@@ -124,10 +124,11 @@ const HTML = `<!DOCTYPE html>
     <div class="text-center mb-6">
       <svg class="w-12 h-12 mx-auto mb-3 text-blue-500" fill="currentColor" viewBox="0 0 24 24"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/></svg>
       <h2 class="text-xl font-semibold">GitHub Gist Manager</h2>
-      <p class="text-gray-400 text-sm mt-1">输入你的 GitHub Token 以开始</p>
+      <p id="token-subtitle-new" class="text-gray-400 text-sm mt-1">输入你的 GitHub Token 以开始</p>
+      <p id="token-subtitle-return" class="text-gray-400 text-sm mt-1 hidden">欢迎回来，<span id="token-return-username" class="text-blue-400 font-semibold"></span></p>
     </div>
     <div class="space-y-4">
-      <div>
+      <div id="token-input-group">
         <div class="flex items-center justify-between mb-1">
           <label class="text-sm font-medium text-gray-300">Personal Access Token</label>
           <span id="token-error" class="text-sm text-red-400 hidden"></span>
@@ -143,6 +144,9 @@ const HTML = `<!DOCTYPE html>
         <svg id="token-btn-spinner" class="hidden animate-spin w-4 h-4" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
         <span id="token-btn-text">确认</span>
       </button>
+      <div id="token-switch-hint" class="text-center hidden">
+        <button id="token-switch-btn" class="text-xs text-gray-500 hover:text-gray-300">更换账号</button>
+      </div>
     </div>
   </div>
 </div>
@@ -287,10 +291,16 @@ const HTML = `<!DOCTYPE html>
 
   const tokenModal = $('#token-modal');
   const tokenInput = $('#token-input');
+  const tokenInputGroup = $('#token-input-group');
   const tokenSaveBtn = $('#token-save-btn');
   const tokenBtnText = $('#token-btn-text');
   const tokenBtnSpinner = $('#token-btn-spinner');
   const tokenError = $('#token-error');
+  const tokenSubtitleNew = $('#token-subtitle-new');
+  const tokenSubtitleReturn = $('#token-subtitle-return');
+  const tokenReturnUsername = $('#token-return-username');
+  const tokenSwitchHint = $('#token-switch-hint');
+  const tokenSwitchBtn = $('#token-switch-btn');
   const app = $('#app');
   const refreshBtn = $('#refresh-btn');
   const logoutBtn = $('#logout-btn');
@@ -339,6 +349,7 @@ const HTML = `<!DOCTYPE html>
   let editPublic = false;
   let activeFileName = null;
   let allGists = [];
+  let isReturningUser = false;
 
   function setSaving(active) {
     if (active) {
@@ -391,17 +402,28 @@ const HTML = `<!DOCTYPE html>
   async function initAuth() {
     try {
       var user = await api('/user');
-      userInfo.textContent = user.login;
-      tokenModal.classList.add('hidden');
-      app.classList.remove('hidden');
-      loadGists();
-    } catch (e) {
+      isReturningUser = true;
+      tokenSubtitleNew.classList.add('hidden');
+      tokenSubtitleReturn.classList.remove('hidden');
+      tokenReturnUsername.textContent = user.login;
+      tokenInputGroup.classList.add('hidden');
+      tokenSwitchHint.classList.remove('hidden');
+      tokenBtnText.textContent = '确认登录';
       tokenModal.classList.remove('hidden');
-      app.classList.add('hidden');
+    } catch (e) {
+      // No valid token - modal is already visible by default
     }
   }
 
   tokenSaveBtn.addEventListener('click', async function() {
+    if (isReturningUser) {
+      var user = await api('/user');
+      userInfo.textContent = user.login;
+      tokenModal.classList.add('hidden');
+      app.classList.remove('hidden');
+      loadGists();
+      return;
+    }
     var val = tokenInput.value.trim();
     if (!val) { tokenError.textContent = '请输入 Token'; tokenError.classList.remove('hidden'); return; }
     tokenError.classList.add('hidden');
@@ -419,8 +441,8 @@ const HTML = `<!DOCTYPE html>
         throw new Error(err.message || 'Invalid token');
       }
       tokenInput.value = '';
-      var user = await api('/user');
-      userInfo.textContent = user.login;
+      var user2 = await api('/user');
+      userInfo.textContent = user2.login;
       tokenModal.classList.add('hidden');
       app.classList.remove('hidden');
       loadGists();
@@ -439,16 +461,35 @@ const HTML = `<!DOCTYPE html>
     if (e.key === 'Enter') tokenSaveBtn.click();
   });
 
+  tokenSwitchBtn.addEventListener('click', async function() {
+    await fetch('/logout', { method: 'POST' });
+    isReturningUser = false;
+    tokenSubtitleNew.classList.remove('hidden');
+    tokenSubtitleReturn.classList.add('hidden');
+    tokenInputGroup.classList.remove('hidden');
+    tokenSwitchHint.classList.add('hidden');
+    tokenBtnText.textContent = '确认';
+    tokenInput.value = '';
+    tokenError.classList.add('hidden');
+  });
+
   logoutBtn.addEventListener('click', async function() {
     await fetch('/logout', { method: 'POST' });
+    isReturningUser = false;
     gists = [];
     allGists = [];
     selectedGist = null;
     selectedGistDetail = null;
     isEditing = false;
+    tokenSubtitleNew.classList.remove('hidden');
+    tokenSubtitleReturn.classList.add('hidden');
+    tokenInputGroup.classList.remove('hidden');
+    tokenSwitchHint.classList.add('hidden');
+    tokenBtnText.textContent = '确认';
     tokenModal.classList.remove('hidden');
     app.classList.add('hidden');
     tokenInput.value = '';
+    tokenError.classList.add('hidden');
     resetContent();
   });
 
