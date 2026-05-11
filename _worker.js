@@ -127,8 +127,6 @@ const HTML = `<!DOCTYPE html>
       <p id="token-modal-desc" class="text-gray-400 text-sm mt-1">输入你的 GitHub Token 以开始</p>
     <\/div>
     <div id="remembered-user" class="hidden text-center mb-4">
-      <img id="remembered-avatar" src="" class="w-10 h-10 rounded-full mx-auto mb-2" alt="">
-      <p id="remembered-username" class="text-base font-medium text-gray-200"><\/p>
       <button id="switch-account-btn" class="text-xs text-blue-400 hover:underline mt-1">使用其他账号<\/button>
     <\/div>
     <div class="space-y-4">
@@ -298,8 +296,6 @@ const HTML = `<!DOCTYPE html>
   const tokenError = $('#token-error');
   const tokenModalDesc = $('#token-modal-desc');
   const rememberedUser = $('#remembered-user');
-  const rememberedAvatar = $('#remembered-avatar');
-  const rememberedUsername = $('#remembered-username');
   const switchAccountBtn = $('#switch-account-btn');
   const tokenInputGroup = $('#token-input-group');
   const app = $('#app');
@@ -404,8 +400,6 @@ const HTML = `<!DOCTYPE html>
     try {
       var user = await api('/user');
       rememberedUserData = { login: user.login, avatar_url: user.avatar_url };
-      rememberedAvatar.src = user.avatar_url || '';
-      rememberedUsername.textContent = user.login;
       tokenModalDesc.textContent = '以 ' + user.login + ' 身份登录';
       rememberedUser.classList.remove('hidden');
       tokenInputGroup.classList.add('hidden');
